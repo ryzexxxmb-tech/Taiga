@@ -1,0 +1,64 @@
+name: Build mod
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack project zip (if the project was uploaded as a .zip)
+        run: |
+          set -e
+          if [ -f build.gradle ]; then
+            DIR=.
+          else
+            ZIP=$(ls *.zip 2>/dev/null | head -n1 || true)
+            [ -n "$ZIP" ] || { echo "No build.gradle and no .zip in the repo root"; exit 1; }
+            mkdir -p project
+            unzip -q -o "$ZIP" -d project
+            GRADLE=$(find project -name build.gradle | head -n1)
+            [ -n "$GRADLE" ] || { echo "build.gradle not found inside $ZIP"; exit 1; }
+            DIR=$(dirname "$GRADLE")
+          fi
+          echo "Project dir: $DIR"
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: current
+
+      - name: Build
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle build --stacktrace
+
+      - name: Collect jar
+        run: |
+          mkdir -p dist
+          for f in "$PROJECT_DIR"/build/libs/*.jar; do
+            case "$f" in *-sources.jar) ;; *) cp "$f" dist/ ;; esac
+          done
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taiga-nights-jar
+          path: dist/*.jar
+
+      - name: Publish jar as a release (direct download, not zipped)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          files: dist/*.jar
